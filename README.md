@@ -1,59 +1,101 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Hermes HUD
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+A lightweight web dashboard to monitor the [Hermes Agent](https://github.com/jefersonpn) running locally on macOS. Built with Laravel 12, Inertia, Vue 3, and Tailwind CSS 4.
 
-## About Laravel
+## What it shows
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- **System metrics** — CPU load and RAM usage, read directly from `vm_stat` / `sysctl` on the host machine.
+- **Hermes gateway status** — online/offline state, PID liveness check, active agents, per-platform state — sourced from `~/.hermes/gateway_state.json`.
+- **Agent logs** — the last N lines of `~/.hermes/logs/agent.log`, parsed into structured timestamp / level / message entries.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+The HUD reads Hermes's local state files directly, so no extra daemon or socket is required between them.
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+## Stack
 
-## Learning Laravel
+| Layer    | Tech                                  |
+| -------- | ------------------------------------- |
+| Backend  | Laravel 12, PHP 8.2+                  |
+| Frontend | Inertia.js + Vue 3                    |
+| Styling  | Tailwind CSS 4 (Vite plugin)          |
+| Build    | Vite 7                                |
+| Database | SQLite (default, for sessions/auth)   |
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+## Requirements
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+- PHP **8.2+**
+- Composer
+- Node.js **20+** and npm
+- macOS host (the system endpoints use `vm_stat` and `sysctl -n hw.ncpu`)
+- A running Hermes agent that writes its state under `~/.hermes` (configurable)
 
-## Laravel Sponsors
+## Setup
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+```bash
+git clone git@github.com:jefersonpn/hermes-hud.git
+cd hermes-hud
 
-### Premium Partners
+composer setup
+```
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+`composer setup` runs `composer install`, copies `.env.example` → `.env`, generates the app key, runs migrations, then `npm install && npm run build`.
 
-## Contributing
+## Running
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+For local development with hot reload, logs, and queue worker all together:
 
-## Code of Conduct
+```bash
+composer dev
+```
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+This launches `php artisan serve`, `queue:listen`, `pail` (live log viewer), and `vite` concurrently.
 
-## Security Vulnerabilities
+Then open [http://localhost:8000](http://localhost:8000) and log in.
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+## Configuration
+
+The Hermes integration is configured via environment variables (see [`config/hermes.php`](config/hermes.php)):
+
+| Variable                        | Default              | Purpose                                                                 |
+| ------------------------------- | -------------------- | ----------------------------------------------------------------------- |
+| `HERMES_DATA_ROOT`              | `$HOME/.hermes`      | Root directory where Hermes writes `gateway_state.json` and `logs/`.    |
+| `HERMES_LOG_TAIL`               | `30`                 | Default number of log lines returned by `/hud/api/hermes/logs`.         |
+| `HERMES_GATEWAY_STALE_SECONDS`  | `30`                 | How old `gateway_state.json` can be before being flagged as stale.      |
+
+## API endpoints
+
+All endpoints sit under `/hud/api` and require an authenticated session.
+
+| Method | Path                       | Returns                                                            |
+| ------ | -------------------------- | ------------------------------------------------------------------ |
+| GET    | `/hud/api/system`          | `{ cpu, ram, load, cores, ts }` — host metrics                     |
+| GET    | `/hud/api/hermes/status`   | Gateway status + per-platform state, with PID liveness check       |
+| GET    | `/hud/api/hermes/logs`     | Last N parsed log entries from `~/.hermes/logs/agent.log`          |
+| GET    | `/hud/api/hermes/gateway`  | Raw contents of `gateway_state.json`                               |
+
+## Project layout
+
+```
+app/
+├── Http/Controllers/
+│   ├── Auth/LoginController.php   # session-based login
+│   └── HudController.php          # dashboard + system + Hermes endpoints
+└── Services/
+    └── HermesClient.php           # reads ~/.hermes state files
+resources/js/
+├── Pages/Hud/Dashboard.vue        # main HUD screen
+└── Pages/Auth/                    # login page
+config/hermes.php                  # Hermes integration config
+routes/web.php                     # routes
+```
+
+## Testing
+
+```bash
+composer test
+```
+
+Runs `php artisan test` after clearing the config cache.
 
 ## License
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+MIT.
